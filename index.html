@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Decision Tree Regression (Depth 2) - Noisy Parabola</title>
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; }
+  #plot { width: 1100px; height: 700px; }
+  </style>
+</head>
+<body>
+  <h2>Decision Tree Regression (Depth 2) on Noisy Parabola</h2>
+  <div style="display: flex; flex-direction: column; gap: 60px;">
+    <div style="display: flex; flex-direction: row; gap: 40px;">
+      <div id="plot" style="flex: 1;"></div>
+      <div id="residual-plot" style="flex: 1;"></div>
+    </div>
+    <div style="display: flex; flex-direction: row; gap: 40px;">
+      <div id="boosted-plot" style="flex: 1;"></div>
+      <div id="boosted-residual-plot" style="flex: 1;"></div>
+    </div>
+  </div>
+  <script>
+    // Generate noisy parabola data
+    function generateData(n, xMin, xMax, noiseStd) {
+      const xs = [];
+      const ys = [];
+      for (let i = 0; i < n; i++) {
+        const x = xMin + (xMax - xMin) * i / (n - 1);
+        const noise = (Math.random() - 0.5) * 2 * noiseStd;
+        const y = x * x + noise;
+        xs.push(x);
+        ys.push(y);
+      }
+      return { xs, ys };
+    }
+
+    // Simple regression tree of depth 2 (2 splits, 3 leaves)
+    function fitRegressionTree(xs, ys) {
+      // Find best split for root
+      let bestSplit = null;
+      let bestMSE = Infinity;
+      for (let i = 1; i < xs.length - 1; i++) {
+        const split = (xs[i] + xs[i - 1]) / 2;
+        const left = ys.slice(0, i);
+        const right = ys.slice(i);
+        const leftMean = left.reduce((a, b) => a + b, 0) / left.length;
+        const rightMean = right.reduce((a, b) => a + b, 0) / right.length;
+        const mse = left.reduce((a, b) => a + (b - leftMean) ** 2, 0) +
+                    right.reduce((a, b) => a + (b - rightMean) ** 2, 0);
+        if (mse < bestMSE) {
+          bestMSE = mse;
+          bestSplit = { split, index: i };
+        }
+      }
+      // Now split left and right again (depth 2)
+      // Left child
+      let bestLeftSplit = null;
+      let bestLeftMSE = Infinity;
+      for (let i = 1; i < bestSplit.index - 1; i++) {
+        const split = (xs[i] + xs[i - 1]) / 2;
+        const left = ys.slice(0, i);
+        const right = ys.slice(i, bestSplit.index);
+        const leftMean = left.reduce((a, b) => a + b, 0) / left.length;
+        const rightMean = right.reduce((a, b) => a + b, 0) / right.length;
+        const mse = left.reduce((a, b) => a + (b - leftMean) ** 2, 0) +
+                    right.reduce((a, b) => a + (b - rightMean) ** 2, 0);
+        if (mse < bestLeftMSE) {
+          bestLeftMSE = mse;
+          bestLeftSplit = { split, index: i };
+        }
+      }
+      // Right child
+      let bestRightSplit = null;
+      let bestRightMSE = Infinity;
+      for (let i = bestSplit.index + 1; i < xs.length - 1; i++) {
+        const split = (xs[i] + xs[i - 1]) / 2;
+        const left = ys.slice(bestSplit.index, i);
+        const right = ys.slice(i);
+        const leftMean = left.reduce((a, b) => a + b, 0) / left.length;
+        const rightMean = right.reduce((a, b) => a + b, 0) / right.length;
+        const mse = left.reduce((a, b) => a + (b - leftMean) ** 2, 0) +
+                    right.reduce((a, b) => a + (b - rightMean) ** 2, 0);
+        if (mse < bestRightMSE) {
+          bestRightMSE = mse;
+          bestRightSplit = { split, index: i };
+        }
+      }
+      // Compute means for each leaf
+      const leftLeftMean = ys.slice(0, bestLeftSplit.index).reduce((a, b) => a + b, 0) / bestLeftSplit.index;
+      const leftRightMean = ys.slice(bestLeftSplit.index, bestSplit.index).reduce((a, b) => a + b, 0) / (bestSplit.index - bestLeftSplit.index);
+      const rightLeftMean = ys.slice(bestSplit.index, bestRightSplit.index).reduce((a, b) => a + b, 0) / (bestRightSplit.index - bestSplit.index);
+      const rightRightMean = ys.slice(bestRightSplit.index).reduce((a, b) => a + b, 0) / (ys.length - bestRightSplit.index);
+      return {
+        rootSplit: bestSplit.split,
+        leftSplit: bestLeftSplit.split,
+        rightSplit: bestRightSplit.split,
+        leftLeftMean,
+        leftRightMean,
+        rightLeftMean,
+        rightRightMean,
+        leftIndex: bestSplit.index,
+        leftLeftIndex: bestLeftSplit.index,
+        rightIndex: bestRightSplit.index
+      };
+    }
+
+    // Predict using the fitted tree
+    function predict(tree, x) {
+      if (x < tree.rootSplit) {
+        if (x < tree.leftSplit) {
+          return tree.leftLeftMean;
+        } else {
+          return tree.leftRightMean;
+        }
+      } else {
+        if (x < tree.rightSplit) {
+          return tree.rightLeftMean;
+        } else {
+          return tree.rightRightMean;
+        }
+      }
+    }
+
+    // Main
+  const N = 150;
+    const xMin = -3, xMax = 3, noiseStd = 0.5;
+    const { xs, ys } = generateData(N, xMin, xMax, noiseStd);
+    // Sort xs and ys by xs for splitting
+    const zipped = xs.map((x, i) => [x, ys[i]]).sort((a, b) => a[0] - b[0]);
+    const xsSorted = zipped.map(z => z[0]);
+    const ysSorted = zipped.map(z => z[1]);
+    const tree = fitRegressionTree(xsSorted, ysSorted);
+    // Predict for a dense set of x
+    const xPred = [];
+    const yPred = [];
+    for (let x = xMin; x <= xMax; x += 0.05) {
+      xPred.push(x);
+      yPred.push(predict(tree, x));
+    }
+    // Plot main graph (first cycle)
+    const tracePoints = {
+      x: xsSorted,
+      y: ysSorted,
+      mode: 'markers',
+      type: 'scatter',
+      name: 'Data Points',
+      marker: { color: 'blue', size: 5 }
+    };
+    const tracePred = {
+      x: xPred,
+      y: yPred,
+      mode: 'lines',
+      type: 'scatter',
+      name: 'Regression Tree Prediction',
+      line: { color: 'red', width: 3 }
+    };
+    Plotly.newPlot('plot', [tracePoints, tracePred], {
+      xaxis: { title: 'x', range: [-4, 4] },
+      yaxis: { title: 'y', range: [-5, 15] },
+      title: 'Regression Tree (Depth 2) Fit to Noisy Parabola',
+      legend: { x: 0.02, y: 0.98 }
+    });
+
+    // Compute residuals (first cycle)
+    const residuals = xsSorted.map((x, i) => ysSorted[i] - predict(tree, x));
+    // Fit a regression tree to the residuals (first cycle)
+    const residualTree = fitRegressionTree(xsSorted, residuals);
+    // Predict the residual tree's output for a dense set of x (first cycle)
+    const yPredResidual = xPred.map(x => predict(residualTree, x));
+    // Plot residuals and the fitted tree (first cycle)
+    const traceResiduals = {
+      x: xsSorted,
+      y: residuals,
+      mode: 'markers',
+      type: 'scatter',
+      name: 'Residuals',
+      marker: { color: 'green', size: 5 }
+    };
+    const traceResidualTree = {
+      x: xPred,
+      y: yPredResidual,
+      mode: 'lines',
+      type: 'scatter',
+      name: 'Residual Tree Prediction',
+      line: { color: 'orange', width: 3 }
+    };
+    Plotly.newPlot('residual-plot', [traceResiduals, traceResidualTree], {
+      xaxis: { title: 'x', range: [-4, 4] },
+      yaxis: { title: 'Residual (y - prediction)' },
+      title: 'Residuals of Regression Tree',
+      legend: { x: 0.02, y: 0.98 }
+    });
+
+    // --- Boosted prediction: sum of first and second tree (second cycle) ---
+    const yPredBoosted = yPred.map((y, i) => y + yPredResidual[i]);
+    const traceBoostedPoints = {
+      x: xsSorted,
+      y: ysSorted,
+      mode: 'markers',
+      type: 'scatter',
+      name: 'Data Points',
+      marker: { color: 'blue', size: 5 }
+    };
+    const traceBoostedLine = {
+      x: xPred,
+      y: yPredBoosted,
+      mode: 'lines',
+      type: 'scatter',
+      name: 'Boosted Prediction (Tree1 + Tree2)',
+      line: { color: 'purple', width: 3 }
+    };
+    Plotly.newPlot('boosted-plot', [traceBoostedPoints, traceBoostedLine], {
+      xaxis: { title: 'x', range: [-4, 4] },
+      yaxis: { title: 'y', range: [-5, 15] },
+      title: 'Boosted Prediction (Tree1 + Tree2)',
+      legend: { x: 0.02, y: 0.98 }
+    });
+
+    // --- Residuals for boosted prediction (second cycle) ---
+    const boostedResiduals = xsSorted.map((x, i) => ysSorted[i] - (predict(tree, x) + predict(residualTree, x)));
+    // Fit a third regression tree to these residuals (second cycle)
+    const boostedResidualTree = fitRegressionTree(xsSorted, boostedResiduals);
+    const yPredBoostedResidual = xPred.map(x => predict(boostedResidualTree, x));
+    const traceBoostedResiduals = {
+      x: xsSorted,
+      y: boostedResiduals,
+      mode: 'markers',
+      type: 'scatter',
+      name: 'Boosted Residuals',
+      marker: { color: 'green', size: 5 }
+    };
+    const traceBoostedResidualTree = {
+      x: xPred,
+      y: yPredBoostedResidual,
+      mode: 'lines',
+      type: 'scatter',
+      name: 'Residual Tree (Boosted)',
+      line: { color: 'orange', width: 3 }
+    };
+    Plotly.newPlot('boosted-residual-plot', [traceBoostedResiduals, traceBoostedResidualTree], {
+      xaxis: { title: 'x', range: [-4, 4] },
+      yaxis: { title: 'Residual (y - boosted prediction)' },
+      title: 'Residuals of Boosted Prediction',
+      legend: { x: 0.02, y: 0.98 }
+    });
+  </script>
+</body>
+</html>
